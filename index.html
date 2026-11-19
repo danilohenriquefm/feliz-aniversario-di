@@ -73,6 +73,13 @@
     -webkit-tap-highlight-color: transparent;
   }
   .ticket-wrap.torn { cursor: default; }
+  .ticket-wrap.carregando { cursor: progress; }
+  .ticket-wrap.carregando .ticket { animation-play-state: paused; }
+  .tap-hint.pisca { animation: pisca .5s ease-in-out; }
+  @keyframes pisca {
+    0%, 100% { color: rgba(246,234,217,.6); transform: scale(1); }
+    50% { color: var(--peach); transform: scale(1.08); }
+  }
   .ticket {
     position: relative;
     display: grid;
@@ -372,7 +379,7 @@
 
   <h1>Feliz Aniversário, <em>Di!</em></h1>
 
-  <div class="ticket-wrap" id="ticketWrap" role="button" tabindex="0" aria-label="Rasgar o vale e ver o presente">
+  <div class="ticket-wrap carregando" id="ticketWrap"role="button" tabindex="0" aria-label="Rasgar o vale e ver o presente">
     <div class="ticket" id="ticket">
       <div class="ticket-main">
         <p class="label">Vale-presente</p>
@@ -387,7 +394,7 @@
       </div>
     </div>
   </div>
-  <p class="tap-hint" id="tapHint">aumenta o som 🔊 e toque no vale</p>
+  <p class="tap-hint" id="tapHint">carregando a música…</p>
   <button class="som" id="som" type="button">❚❚ pausar música</button>
 
   <section class="reveal" id="reveal">
@@ -443,18 +450,53 @@
   // ---------- música ----------
   // Tempos em segundos dentro da faixa
   const MUSICA = "kool-aid.mp3";
-  const INICIO = 27.0;    // começa a tocar daqui
-  const BATIDA1 = 29.61;  // primeiro "pa"
-  const BATIDA2 = 30.01;  // segundo "pa"
+  const INICIO = 1.0;     // começa a tocar daqui (a faixa já foi cortada a partir do segundo 26 da original)
+  const BATIDA1 = 3.61;   // primeiro "pa"
+  const BATIDA2 = 4.01;   // segundo "pa"
   const CORTE_RAPIDO = 0.12; // duração de cada corte nas batidas
 
-  const audio = new Audio(MUSICA);
+  const audio = new Audio();
   audio.preload = "auto";
-  // baixa a faixa inteira pra conseguir pular direto pro segundo 27
-  fetch(MUSICA)
-    .then(r => r.blob())
-    .then(b => { if (!wrap.classList.contains("torn")) audio.src = URL.createObjectURL(b); })
-    .catch(() => {});
+  let pronto = false;
+
+  const dica = texto => { $("tapHint").textContent = texto; };
+
+  // espera um evento do áudio, com tempo limite pra nunca travar a página
+  const esperar = (evento, ms) => new Promise(ok => {
+    audio.addEventListener(evento, ok, { once: true });
+    setTimeout(ok, ms);
+  });
+
+  // baixa a faixa inteira antes de liberar o clique, já posicionada no segundo 27,
+  // pra música começar no mesmo instante do toque
+  async function carregarMusica() {
+    try {
+      const r = await fetch(MUSICA);
+      if (!r.ok) throw new Error(r.status);
+      const total = Number(r.headers.get("content-length")) || 0;
+      const leitor = r.body.getReader();
+      const partes = [];
+      let recebido = 0;
+      for (;;) {
+        const { done, value } = await leitor.read();
+        if (done) break;
+        partes.push(value);
+        recebido += value.length;
+        if (total) dica(`carregando a música… ${Math.min(99, Math.round(recebido / total * 100))}%`);
+      }
+      audio.src = URL.createObjectURL(new Blob(partes, { type: "audio/mpeg" }));
+    } catch {
+      audio.src = MUSICA;
+    }
+    await esperar("canplaythrough", 8000);
+    audio.currentTime = INICIO;
+    await esperar("seeked", 2000);
+
+    pronto = true;
+    wrap.classList.remove("carregando");
+    dica("aumenta o som 🔊 e toque no vale");
+  }
+  carregarMusica();
 
   const som = $("som");
   som.addEventListener("click", () => {
@@ -517,6 +559,12 @@
 
   function rasgar() {
     if (wrap.classList.contains("torn")) return;
+    if (!pronto) {
+      $("tapHint").classList.remove("pisca");
+      void $("tapHint").offsetWidth;
+      $("tapHint").classList.add("pisca");
+      return;
+    }
     wrap.classList.add("torn");
     $("tapHint").style.visibility = "hidden";
 
